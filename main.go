@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/signal"
 	"time"
@@ -104,7 +105,6 @@ func Tracing(isMandatory bool) Adapter {
 	return func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
-				w.Header().Add("X-Port", "Tracing")
 				log.Println("Tracing: After")
 			}()
 
@@ -123,9 +123,21 @@ func Tracing(isMandatory bool) Adapter {
 				requestID = tracer.GenerateRandomID()
 			}
 
-			ctx := tracer.NewContext(r.Context(), requestID)
+			r = r.WithContext(tracer.NewContext(r.Context(), requestID))
 
-			h.ServeHTTP(w, r.WithContext(ctx))
+			// switch out response writer for a recorder
+			// for all subsequent handlers
+			c := httptest.NewRecorder()
+			h.ServeHTTP(c, r)
+
+			// copy everything from response recorder
+			// to actual response writer
+			for k, v := range c.HeaderMap {
+				w.Header()[k] = v
+			}
+			w.Header().Add("X-Post", "Tracing")
+			w.WriteHeader(c.Code)
+			c.Body.WriteTo(w)
 		})
 	}
 }
