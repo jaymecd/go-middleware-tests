@@ -1,16 +1,13 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/signal"
-	"time"
 
+	"./server"
 	"./tracer"
 )
 
@@ -21,30 +18,24 @@ func main() {
 
 	flag.Parse()
 
-	// subscribe to SIGINT signals
-	stopChan := make(chan os.Signal)
-	signal.Notify(stopChan, os.Interrupt)
-
 	mux := http.NewServeMux()
 	mux.Handle("/", AdaptFunc(indexHandler, Tracing(*strictTrace), Logging()))
 
-	srv := &http.Server{Addr: ":8080", Handler: mux}
+	srv := server.NewServer(":8080")
 
-	// service connections
-	go func() {
-		log.Println("Starting server...")
-		log.Fatal(srv.ListenAndServe())
-	}()
+	log.Println("Starting server...")
 
-	<-stopChan // wait for SIGINT
+	if err := srv.Start(mux); err != nil {
+		log.Fatal(err)
+	}
 
-	// shut down gracefully, but wait no longer than 5 seconds before halting
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	log.Println("Server started ...")
+
+	srv.Wait()
 
 	log.Println("Shutting down server...")
 
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Stop(); err != nil {
 		log.Fatal(err)
 	}
 
