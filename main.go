@@ -23,23 +23,15 @@ func main() {
 
 	srv := server.NewServer(":8080")
 
-	log.Println("Starting server...")
-
 	if err := srv.Start(mux); err != nil {
 		log.Fatal(err)
 	}
 
-	log.Println("Server started ...")
-
 	srv.Wait()
-
-	log.Println("Shutting down server...")
 
 	if err := srv.Stop(); err != nil {
 		log.Fatal(err)
 	}
-
-	log.Println("Server gracefully stopped")
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
