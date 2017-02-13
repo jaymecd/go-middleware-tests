@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 
+	"github.com/go-errors/errors"
+	"github.com/justinas/alice"
+
 	"./server"
 	"./tracer"
 )
@@ -18,8 +21,10 @@ func main() {
 
 	flag.Parse()
 
+	stdWrappers := alice.New(Tracing(*strictTrace), Logging, Recovering)
+
 	mux := http.NewServeMux()
-	mux.Handle("/", AdaptFunc(indexHandler, Tracing(*strictTrace), Logging()))
+	mux.Handle("/", stdWrappers.ThenFunc(indexHandler))
 
 	srv := server.NewServer(":8080")
 
@@ -40,51 +45,49 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("REQUEST ID:", requestID)
 
 	if ok {
+		if "43" == requestID {
+			panic("F*#$!")
+		}
+
 		fmt.Fprintf(w, "My Request-Id: %s\n", requestID)
 	} else {
 		fmt.Fprintln(w, "No Request-Id detected")
 	}
 }
 
-// From https://medium.com/@matryer/writing-middleware-in-golang-and-how-go-makes-it-so-much-fun-4375c1246e81#.qhnydpwrp
+// Recovering ...
+func Recovering(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Println(errors.Wrap(err, 3).ErrorStack())
 
-// Adapter ...
-type Adapter func(http.Handler) http.Handler
+				http.Error(w, http.StatusText(500), 500)
+			}
+		}()
 
-// Adapt ...
-func Adapt(h http.Handler, adapters ...Adapter) http.Handler {
-	for _, adapter := range adapters {
-		h = adapter(h)
-	}
-	return h
-}
-
-// AdaptFunc ...
-func AdaptFunc(fn http.HandlerFunc, adapters ...Adapter) http.Handler {
-	return Adapt(http.HandlerFunc(fn), adapters...)
+		h.ServeHTTP(w, r)
+	})
 }
 
 // Logging ...
-func Logging() Adapter {
-	return func(h http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer func() {
-				w.Header().Add("X-Post", "Logging")
-				log.Println("Logging: After")
-			}()
+func Logging(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			log.Println("Logging: After")
+		}()
 
-			w.Header().Add("X-Pre", "Logging")
-			log.Println("Logging: Before")
+		w.Header().Add("X-Pre", "Logging")
+		log.Println("Logging: Before")
 
-			log.Println("Logger: ", r.Method, r.URL.Path)
+		log.Println("Logger: ", r.Method, r.URL.Path)
 
-			h.ServeHTTP(w, r)
-		})
-	}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // Tracing ...
-func Tracing(isMandatory bool) Adapter {
+func Tracing(isMandatory bool) func(h http.Handler) http.Handler {
 	return func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
